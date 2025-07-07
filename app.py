@@ -7,6 +7,7 @@ import time
 from typing import Optional
 import os
 from datetime import datetime
+import re
 try:
     from openai import OpenAI
     OPENAI_AVAILABLE = True
@@ -24,6 +25,73 @@ def generate_filename(base_name: str, extension: str) -> str:
     """Generate a filename with datetime format"""
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     return f"{base_name}_{timestamp}.{extension}"
+
+def anonymize_data(text: str, enable_anonymization: bool = False) -> tuple[str, dict]:
+    """
+    Anonymize sensitive data in text before sending to LLM
+    Returns anonymized text and mapping for de-anonymization
+    """
+    if not enable_anonymization:
+        return text, {}
+    
+    anonymization_map = {}
+    anonymized_text = text
+    
+    # Email addresses
+    email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+    emails = re.findall(email_pattern, text)
+    for i, email in enumerate(emails):
+        placeholder = f"EMAIL_{i+1}@example.com"
+        anonymization_map[placeholder] = email
+        anonymized_text = anonymized_text.replace(email, placeholder)
+    
+    # Phone numbers (various formats)
+    phone_patterns = [
+        r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b',  # XXX-XXX-XXXX, XXX.XXX.XXXX, XXXXXXXXXX
+        r'\(\d{3}\)\s*\d{3}[-.]?\d{4}',    # (XXX) XXX-XXXX
+        r'\+\d{1,3}[-.\s]?\d{1,14}',       # International formats
+    ]
+    for pattern in phone_patterns:
+        phones = re.findall(pattern, text)
+        for i, phone in enumerate(phones):
+            placeholder = f"PHONE_{i+1}"
+            anonymization_map[placeholder] = phone
+            anonymized_text = anonymized_text.replace(phone, placeholder)
+    
+    # SSN patterns
+    ssn_pattern = r'\b\d{3}-\d{2}-\d{4}\b'
+    ssns = re.findall(ssn_pattern, text)
+    for i, ssn in enumerate(ssns):
+        placeholder = f"SSN_{i+1}"
+        anonymization_map[placeholder] = ssn
+        anonymized_text = anonymized_text.replace(ssn, placeholder)
+    
+    # Credit Card patterns (basic)
+    cc_pattern = r'\b\d{4}[-.\s]?\d{4}[-.\s]?\d{4}[-.\s]?\d{4}\b'
+    ccs = re.findall(cc_pattern, text)
+    for i, cc in enumerate(ccs):
+        placeholder = f"CARD_{i+1}"
+        anonymization_map[placeholder] = cc
+        anonymized_text = anonymized_text.replace(cc, placeholder)
+    
+    # Names (simple pattern - capitalize words that might be names)
+    # This is basic and may need refinement
+    name_pattern = r'\b[A-Z][a-z]+ [A-Z][a-z]+\b'
+    names = re.findall(name_pattern, text)
+    for i, name in enumerate(names):
+        if len(name.split()) == 2:  # Only replace if it looks like first + last name
+            placeholder = f"PERSON_{i+1}"
+            anonymization_map[placeholder] = name
+            anonymized_text = anonymized_text.replace(name, placeholder)
+    
+    return anonymized_text, anonymization_map
+
+def de_anonymize_data(text: str, anonymization_map: dict) -> str:
+    """Restore original data from anonymized text"""
+    de_anonymized_text = text
+    for placeholder, original in anonymization_map.items():
+        de_anonymized_text = de_anonymized_text.replace(placeholder, original)
+    return de_anonymized_text
 
 class LLMProcessor:
     """Handles communication with LLMs via Ollama or OpenAI"""
@@ -73,15 +141,18 @@ class LLMProcessor:
             except:
                 return []
     
-    def process_text(self, text: str, custom_prompt: str = None) -> str:
+    def process_text(self, text: str, custom_prompt: str = None, enable_anonymization: bool = False) -> str:
         """Process messy agent notes into clean, readable format"""
+        
+        # Anonymize data if enabled
+        anonymized_text, anonymization_map = anonymize_data(text, enable_anonymization)
         
         if custom_prompt:
             # Use custom prompt provided by user
             prompt = f"""{custom_prompt}
 
 Original text:
-{text}
+{anonymized_text}
 
 Response:"""
         else:
@@ -91,14 +162,21 @@ Response:"""
 Please provide a clean, concise summary of what actually happened in this customer service interaction. Focus only on the essential facts and ignore system text, repetitive information, and irrelevant details.
 
 Original messy text:
-{text}
+{anonymized_text}
 
 Clean summary:"""
 
+        # Process with LLM
         if self.provider == "openai":
-            return self._process_with_openai(prompt)
+            processed_result = self._process_with_openai(prompt)
         else:
-            return self._process_with_ollama(prompt)
+            processed_result = self._process_with_ollama(prompt)
+        
+        # De-anonymize the result if anonymization was used
+        if enable_anonymization and anonymization_map:
+            processed_result = de_anonymize_data(processed_result, anonymization_map)
+        
+        return processed_result
     
     def _process_with_openai(self, prompt: str) -> str:
         """Process text using OpenAI API"""
@@ -333,6 +411,22 @@ def main():
         
         st.divider()
         
+        # Data Privacy Settings
+        st.subheader("🔒 Data Privacy")
+        enable_anonymization = st.checkbox(
+            "Enable data anonymization",
+            value=False,
+            help="Automatically remove/replace sensitive data (emails, phones, SSNs, names) before sending to LLM. Original data is restored in results."
+        )
+        
+        if enable_anonymization:
+            st.info("🛡️ **Privacy Mode Enabled**: Emails, phone numbers, SSNs, credit cards, and names will be temporarily anonymized before LLM processing.")
+        
+        # Store in session state for access during processing
+        st.session_state.enable_anonymization = enable_anonymization
+        
+        st.divider()
+        
         if provider == "ollama":
             # Ollama settings
             st.subheader("🖥️ Ollama Settings")
@@ -556,8 +650,9 @@ def main():
                                         processing_placeholder = st.empty()
                                         processing_placeholder.info("🔄 Processing with LLM...")
                                         
-                                        # Process the text
-                                        processed_text = st.session_state.llm_processor.process_text(original_text, custom_prompt)
+                                        # Process the text with anonymization if enabled
+                                        enable_anon = st.session_state.get('enable_anonymization', False)
+                                        processed_text = st.session_state.llm_processor.process_text(original_text, custom_prompt, enable_anon)
                                         
                                         # Replace processing indicator with result
                                         processing_placeholder.empty()
@@ -860,8 +955,9 @@ def main():
                                     processing_placeholder = st.empty()
                                     processing_placeholder.info("🔄 Processing with LLM...")
                                     
-                                    # Process the text
-                                    processed_text = st.session_state.llm_processor.process_text(original_text, custom_prompt)
+                                    # Process the text with anonymization if enabled
+                                    enable_anon = st.session_state.get('enable_anonymization', False)
+                                    processed_text = st.session_state.llm_processor.process_text(original_text, custom_prompt, enable_anon)
                                     
                                     # Replace processing indicator with result
                                     processing_placeholder.empty()
