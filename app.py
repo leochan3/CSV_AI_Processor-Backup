@@ -6,6 +6,7 @@ import io
 import time
 from typing import Optional
 import os
+from datetime import datetime
 try:
     from openai import OpenAI
     OPENAI_AVAILABLE = True
@@ -18,6 +19,11 @@ st.set_page_config(
     page_icon="📊",
     layout="wide"
 )
+
+def generate_filename(base_name: str, extension: str) -> str:
+    """Generate a filename with datetime format"""
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    return f"{base_name}_{timestamp}.{extension}"
 
 class LLMProcessor:
     """Handles communication with LLMs via Ollama or OpenAI"""
@@ -589,7 +595,7 @@ def main():
                         st.download_button(
                             label="📥 Download as CSV",
                             data=csv_data,
-                            file_name=f"processed_{uploaded_file.name.replace('.xlsx', '.csv').replace('.xls', '.csv')}",
+                            file_name=generate_filename("processed_data", "csv"),
                             mime="text/csv"
                         )
                     
@@ -603,7 +609,7 @@ def main():
                         st.download_button(
                             label="📥 Download as Excel",
                             data=excel_data,
-                            file_name=f"processed_{uploaded_file.name}",
+                            file_name=generate_filename("processed_data", "xlsx"),
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
 
@@ -893,7 +899,7 @@ def main():
                     st.download_button(
                         label="📥 Download as CSV",
                         data=csv_data,
-                        file_name=f"processed_pasted_data.csv",
+                        file_name=generate_filename("processed_data", "csv"),
                         mime="text/csv"
                     )
                 
@@ -907,7 +913,7 @@ def main():
                     st.download_button(
                         label="📥 Download as Excel",
                         data=excel_data,
-                        file_name=f"processed_pasted_data.xlsx",
+                        file_name=generate_filename("processed_data", "xlsx"),
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
 
