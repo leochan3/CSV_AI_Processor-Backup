@@ -139,28 +139,102 @@ Clean summary:"""
             return f"Error: {str(e)}"
 
 def load_file(uploaded_file) -> Optional[pd.DataFrame]:
-    """Load Excel or CSV file into pandas DataFrame"""
+    """Load Excel or CSV file into pandas DataFrame with encoding detection"""
     try:
         if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file)
+            st.write("🔍 **Debug:** Attempting to load CSV file...")
+            # Try multiple encodings for CSV files
+            encodings_to_try = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252', 'iso-8859-1', 'gbk', 'big5']
+            
+            for i, encoding in enumerate(encodings_to_try):
+                try:
+                    st.write(f"🔍 **Debug:** Trying encoding {i+1}/{len(encodings_to_try)}: {encoding}")
+                    # Reset file pointer to beginning
+                    uploaded_file.seek(0)
+                    df = pd.read_csv(uploaded_file, encoding=encoding)
+                    if len(df) == 0:
+                        st.warning(f"⚠️ File loaded with {encoding} but appears to be empty")
+                        return None
+                    st.success(f"✅ File loaded successfully using {encoding} encoding!")
+                    return df
+                except UnicodeDecodeError as e:
+                    st.write(f"🔍 **Debug:** {encoding} failed - {str(e)[:100]}...")
+                    continue
+                except Exception as e:
+                    st.write(f"🔍 **Debug:** {encoding} failed with error: {str(e)[:100]}...")
+                    if encoding == encodings_to_try[-1]:  # Last encoding attempt
+                        raise e
+                    continue
+            
+            # If all encodings fail, try with error handling
+            st.write("🔍 **Debug:** All encodings failed, trying alternative approaches...")
+            
+            # Try reading as text first to identify issues
+            try:
+                uploaded_file.seek(0)
+                raw_content = uploaded_file.read()
+                
+                # Try to decode with different encodings for text
+                for encoding in ['gb2312', 'gb18030', 'shift_jis', 'euc-kr']:
+                    try:
+                        text_content = raw_content.decode(encoding)
+                        st.write(f"🔍 **Debug:** Successfully decoded text with {encoding}")
+                        
+                        # Save decoded content to temporary file-like object
+                        from io import StringIO
+                        text_file = StringIO(text_content)
+                        
+                        # Try to read CSV with flexible parsing
+                        df = pd.read_csv(text_file, sep=None, engine='python', encoding=None, on_bad_lines='skip')
+                        if len(df) == 0:
+                            st.warning(f"⚠️ File decoded with {encoding} but appears to be empty")
+                            continue
+                        st.warning(f"⚠️ File loaded using {encoding} encoding with flexible parsing (some bad lines may be skipped)")
+                        return df
+                    except Exception as e:
+                        st.write(f"🔍 **Debug:** {encoding} approach failed: {str(e)[:100]}...")
+                        continue
+                        
+            except Exception as e:
+                st.write(f"🔍 **Debug:** Raw content reading failed: {str(e)}")
+                pass
+                
         elif uploaded_file.name.endswith(('.xlsx', '.xls')):
+            st.write("🔍 **Debug:** Attempting to load Excel file...")
             df = pd.read_excel(uploaded_file)
+            if len(df) == 0:
+                st.warning("⚠️ Excel file appears to be empty")
+                return None
+            st.success("✅ Excel file loaded successfully!")
+            return df
         else:
             st.error("Unsupported file format. Please upload CSV or Excel files.")
             return None
-        return df
+            
     except Exception as e:
+        st.write(f"🔍 **Debug:** Final exception caught: {str(e)}")
         st.error(f"Error loading file: {str(e)}")
+        st.info("💡 **Troubleshooting tips:**\n"
+               "- Try saving your CSV with UTF-8 encoding\n"
+               "- Convert to Excel format (.xlsx)\n"
+               "- Or try the 'Paste data directly' option instead")
         return None
 
 def parse_pasted_data(pasted_text: str) -> Optional[pd.DataFrame]:
-    """Parse pasted Excel cell data into pandas DataFrame"""
+    """Parse pasted Excel cell data into pandas DataFrame with better character handling"""
     try:
         if not pasted_text.strip():
             return None
         
+        # Clean the text to handle potential encoding issues
+        try:
+            # Try to encode/decode to clean up any problematic characters
+            cleaned_text = pasted_text.encode('utf-8', errors='replace').decode('utf-8')
+        except:
+            cleaned_text = pasted_text
+        
         # Split into lines
-        lines = pasted_text.strip().split('\n')
+        lines = cleaned_text.strip().split('\n')
         
         # Try to detect separator (tab is most common from Excel copy)
         sample_line = lines[0]
@@ -174,14 +248,33 @@ def parse_pasted_data(pasted_text: str) -> Optional[pd.DataFrame]:
         # Parse data
         data = []
         for line in lines:
-            row = line.split(separator)
-            data.append(row)
+            # Clean each line and split
+            clean_line = line.strip()
+            if clean_line:  # Skip empty lines
+                row = clean_line.split(separator)
+                # Clean each cell to remove any problematic characters
+                cleaned_row = []
+                for cell in row:
+                    try:
+                        # Replace any problematic characters
+                        clean_cell = cell.strip().replace('\r', '').replace('\x00', '')
+                        cleaned_row.append(clean_cell)
+                    except:
+                        cleaned_row.append(str(cell).strip())
+                data.append(cleaned_row)
         
         # Create DataFrame
         if len(data) > 0:
+            # Ensure all rows have the same number of columns
+            max_cols = max(len(row) for row in data)
+            for row in data:
+                while len(row) < max_cols:
+                    row.append('')
+            
             # Use first row as headers if it looks like headers, otherwise create generic headers
             first_row = data[0]
-            has_headers = any(not str(cell).replace('.', '').replace('-', '').isdigit() for cell in first_row if cell.strip())
+            has_headers = any(not str(cell).replace('.', '').replace('-', '').replace(' ', '').isdigit() 
+                            for cell in first_row if cell.strip())
             
             if has_headers and len(data) > 1:
                 df = pd.DataFrame(data[1:], columns=first_row)
@@ -191,12 +284,21 @@ def parse_pasted_data(pasted_text: str) -> Optional[pd.DataFrame]:
                 columns = [f"Column_{i+1}" for i in range(num_cols)]
                 df = pd.DataFrame(data, columns=columns)
             
+            # Clean the DataFrame to remove any remaining problematic characters
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    df[col] = df[col].astype(str).str.replace('\r', '').str.replace('\x00', '').str.strip()
+            
             return df
         
         return None
         
     except Exception as e:
         st.error(f"Error parsing pasted data: {str(e)}")
+        st.info("💡 **Try these solutions:**\n"
+               "- Copy and paste smaller sections at a time\n"
+               "- Save your data as a CSV file and upload instead\n"
+               "- Make sure you're copying from Excel correctly (select cells, Ctrl+C)")
         return None
 
 def main():
@@ -319,15 +421,25 @@ def main():
         )
         
         if uploaded_file is not None:
+            # Show file information for debugging
+            st.info(f"📁 **File Info:** {uploaded_file.name} ({uploaded_file.size:,} bytes)")
+            
             # Load and display file
-            df = load_file(uploaded_file)
+            with st.spinner("Loading file..."):
+                df = load_file(uploaded_file)
             
             if df is not None:
-                st.success(f"File loaded successfully! Shape: {df.shape}")
+                st.success(f"✅ File loaded successfully! Shape: {df.shape}")
                 
                 # Show column selection
                 st.subheader("📋 Column Selection")
                 columns = df.columns.tolist()
+                
+                # Debug: Show column names
+                with st.expander("🔍 Debug Info - Column Names", expanded=False):
+                    st.write("**Available columns:**")
+                    for i, col in enumerate(columns):
+                        st.write(f"{i+1}. `{col}` (type: {df[col].dtype})")
                 
                 # Try to auto-detect agent_notes column
                 agent_notes_col = None
@@ -350,7 +462,14 @@ def main():
                 # Show sample of selected column
                 if selected_column:
                     st.subheader(f"📝 Sample from '{selected_column}' column")
-                    sample_text = str(df[selected_column].iloc[0]) if len(df) > 0 else "No data"
+                    if len(df) > 0:
+                        sample_text = str(df[selected_column].iloc[0])
+                        # Show character count and type info
+                        char_count = len(sample_text)
+                        st.caption(f"Sample length: {char_count} characters")
+                    else:
+                        sample_text = "No data"
+                    
                     with st.expander("View sample text", expanded=True):
                         st.text_area("Original text", sample_text, height=150, disabled=True, key="file_sample")
                 
@@ -487,6 +606,90 @@ def main():
                             file_name=f"processed_{uploaded_file.name}",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
+
+            else:
+                # File failed to load - provide detailed error information
+                st.error("❌ **Failed to load the file!**")
+                
+                # Analyze the specific error patterns
+                error_analysis = []
+                if hasattr(st.session_state, 'last_error'):
+                    error_msg = str(st.session_state.last_error)
+                    if "0xe7" in error_msg or "0xc1" in error_msg:
+                        error_analysis.append("🔤 **Chinese/Asian characters detected** - File likely saved in Chinese encoding")
+                    if "Expected" in error_msg and "fields" in error_msg:
+                        error_analysis.append("📊 **Inconsistent column structure** - Rows have different numbers of columns")
+                
+                st.warning("**Specific Issues Detected:**")
+                for analysis in error_analysis:
+                    st.markdown(f"- {analysis}")
+                
+                if not error_analysis:
+                    st.markdown("""
+                    - **Encoding problems**: File contains special characters
+                    - **File corruption**: File may be damaged or incomplete  
+                    - **Format issues**: File format not recognized properly
+                    - **Empty file**: File contains no data
+                    - **Permission issues**: File may be locked or in use
+                    """)
+                
+                st.info("**💡 Targeted Solutions:**")
+                
+                # Provide specific solutions based on the error type
+                if any("Chinese" in analysis for analysis in error_analysis):
+                    st.markdown("""
+                    **For Chinese/Asian character files:**
+                    1. **Open in Excel** and save as "CSV UTF-8" format
+                    2. **Use Notepad++**: Open file → Encoding → Convert to UTF-8 → Save
+                    3. **Google Sheets**: Upload → Download as CSV
+                    4. **Try paste method**: Copy data from Excel → Use "Paste data directly"
+                    """)
+                
+                if any("column structure" in analysis for analysis in error_analysis):
+                    st.markdown("""
+                    **For inconsistent column structure:**
+                    1. **Check your CSV**: Make sure all rows have the same number of commas/tabs
+                    2. **Fix in Excel**: Open, verify columns align properly, save again
+                    3. **Remove extra commas**: Look for commas inside text fields that break structure
+                    4. **Use quotes**: Wrap text containing commas in quotes ("text, with, commas")
+                    """)
+                
+                st.markdown("""
+                **General solutions:**
+                1. **Try the 'Paste data directly' option** instead
+                2. **Re-save your file** as UTF-8 CSV or Excel format
+                3. **Check file size** - very large files may timeout
+                4. **Copy a few rows** and use paste feature to test
+                """)
+                
+                # Show file details for debugging
+                st.subheader("🔍 File Debug Information")
+                st.write(f"**Filename:** {uploaded_file.name}")
+                st.write(f"**File size:** {uploaded_file.size:,} bytes")
+                st.write(f"**File type:** {uploaded_file.type}")
+                
+                # Try to show first few bytes of the file for debugging
+                try:
+                    uploaded_file.seek(0)
+                    first_bytes = uploaded_file.read(100)
+                    uploaded_file.seek(0)
+                    
+                    # Show both raw bytes and attempt to decode
+                    st.write(f"**First 100 bytes (raw):** `{first_bytes}`")
+                    
+                    # Try to show what characters these bytes represent
+                    for encoding in ['gb2312', 'gbk', 'big5', 'shift_jis']:
+                        try:
+                            decoded = first_bytes.decode(encoding)
+                            st.write(f"**As {encoding}:** `{decoded[:50]}...`")
+                            break
+                        except:
+                            continue
+                            
+                except Exception as e:
+                    st.write(f"**Cannot read file bytes:** {str(e)}")
+                
+                return  # Stop here if file failed to load
 
     elif data_input_option == "Paste data directly":
         st.subheader("👇 Paste your Excel data here:")
