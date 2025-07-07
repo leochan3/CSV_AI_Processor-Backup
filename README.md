@@ -5,20 +5,30 @@ A powerful tool that uses local Large Language Models (LLMs) to process and clea
 ## ✨ Features
 
 - **File Upload Support**: Excel (.xlsx, .xls) and CSV files
-- **Local LLM Integration**: Uses Ollama for private, local text processing
+- **Dual LLM Support**: Local Ollama OR OpenAI API for maximum flexibility
 - **Smart Column Detection**: Automatically detects agent notes columns
 - **Batch Processing**: Process all rows or select specific number of rows
 - **Progress Tracking**: Real-time progress bar and status updates
 - **Before/After Comparison**: Side-by-side view of original vs processed text
-- **Multiple Export Options**: Download results as CSV or Excel
+- **Multiple Export Options**: Download results as CSV or Excel with datetime-based filenames
 - **User-Friendly Interface**: Clean, intuitive web interface built with Streamlit
+
+## 🌐 **Live Demo**
+
+**Try the live version**: [CSV AI Processor on Streamlit Cloud](https://csv-ai-processor-backup.streamlit.app) *(if deployed)*
+
+**For cloud deployment, use OpenAI API instead of local Ollama for best performance.*
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
+**For Local Use:**
 1. **Python 3.8 or higher**
 2. **Ollama** - For running local LLMs
+
+**For Cloud Deployment:**
+1. **OpenAI API Key** - Get one from [OpenAI Platform](https://platform.openai.com/api-keys)
 
 ### Installation
 
@@ -33,7 +43,9 @@ A powerful tool that uses local Large Language Models (LLMs) to process and clea
    pip install -r requirements.txt
    ```
 
-3. **Install and setup Ollama**
+3. **Choose Your LLM Provider:**
+
+   **Option A: Local Ollama (Recommended for Privacy)**
    
    **Windows:**
    - Download Ollama from: https://ollama.ai/download/windows
@@ -49,29 +61,51 @@ A powerful tool that uses local Large Language Models (LLMs) to process and clea
    curl -fsSL https://ollama.ai/install.sh | sh
    ```
 
-4. **Start Ollama service**
+   **Start Ollama and pull a model:**
    ```bash
+   # Start Ollama service
    ollama serve
-   ```
-
-5. **Pull a language model** (in a new terminal)
-   ```bash
-   # For general use (recommended)
+   
+   # In a new terminal, pull a model
    ollama pull llama2
-   
-   # Or for faster processing (smaller model)
-   ollama pull phi3:mini
-   
-   # Or for better quality (larger model)
-   ollama pull codellama
    ```
 
-6. **Run the application**
+   **Option B: OpenAI API (Recommended for Cloud)**
+   - Get your API key from [OpenAI Platform](https://platform.openai.com/api-keys)
+   - Select "OpenAI" as provider in the app sidebar
+   - Enter your API key when prompted
+
+4. **Run the application**
    ```bash
    streamlit run app.py
    ```
 
-7. **Open your browser** and go to `http://localhost:8501`
+5. **Open your browser** and go to `http://localhost:8501`
+
+## 🌐 **Cloud Deployment Guide**
+
+### **Deploy to Streamlit Community Cloud (Free)**
+
+1. **Fork this repository** to your GitHub account
+2. **Go to [share.streamlit.io](https://share.streamlit.io)**
+3. **Sign in with GitHub**
+4. **Click "Create app"**
+5. **Select your forked repository**
+6. **Set main file path**: `app.py`
+7. **Click "Deploy"**
+
+**⚠️ Important for Cloud Users:**
+- **Use OpenAI API**: Local Ollama doesn't work in cloud environments
+- **Get API Key**: Sign up at [OpenAI Platform](https://platform.openai.com/api-keys)
+- **Select Provider**: In the app sidebar, choose "OpenAI" instead of "Ollama"
+- **Cost-Effective Models**: Use `gpt-4o-mini` for cheaper processing
+
+### **Other Cloud Options**
+
+**Railway:** Great for automatic deployments
+**Render:** Free tier with easy setup  
+**Heroku:** Popular but requires paid plan
+**DigitalOcean App Platform:** Professional hosting
 
 ## 📋 How to Use
 
